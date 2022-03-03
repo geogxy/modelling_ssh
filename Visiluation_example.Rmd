@@ -1,0 +1,558 @@
+---
+title: "Visilization"
+author: "Guojg"
+date: "2021/12/12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. 参数设置 
+```{r}
+library(sf)
+library(gstat)
+library(MASS)
+
+Simulate_mv = function(rowmax, colmax, Sigma, mu, lens) {
+  sfc = st_sfc(st_polygon(list(rbind(
+    c(0, 0), c(rowmax, 0), c(rowmax, colmax), c(0, 0)
+  ))))
+  polygon = st_make_grid(sfc, cellsize = c(1, 1))
+  
+  # sf
+  df_poly = as.data.frame(polygon)
+  sf_poly = st_as_sf(df_poly)
+  
+  mv_data = NULL
+  nc = c(1:length(mu))
+  d = nrow(Sigma)
+  set.seed(101125)
+  for (i in nc) {
+    mv_data = rbind(mv_data,cbind( mvrnorm(n = lens[i], rep(mu[i], d), Sigma), rep(i, lens[i])))
+  }
+  sf_poly = cbind(sf_poly, mv_data)
+  colnames(sf_poly)[6] = 'labels'
+  sf_poly
+}
+
+
+```
+
+
+```{r}
+resultdir = "../result/Visilization_EDA/"
+```
+
+# 2. 模拟数据1 
+
+```{r}
+rowmax = 20
+colmax = 20
+# Sigma <- diag(rep(1,25))
+Sigma <- matrix(rep(0.25,25), ncol = 5)
+Sigma[1,1] = 1
+Sigma[2,2] = 1
+Sigma[3,3] = 1
+Sigma[4,4] = 1
+Sigma[5,5] = 1
+mu = c(-3,0,3)
+lens = c(140,120,140)
+```
+
+```{r}
+library(corrplot)
+# corrplot::(Sigma)
+```
+## 2.1 模拟数据
+
+```{r}
+simdata = Simulate_mv(rowmax,colmax,Sigma, mu, lens)
+plot(simdata)
+```
+
+## 2.2 Visiluation
+
+```{r}
+library(mclust)
+```
+
+```{r}
+class <- simdata$labels
+# X = cbind(sf_poly$X1,sf_poly$X2,sf_poly$X3,sf_poly$X4,sf_poly$X5)
+table(class)
+X = simdata[,1:5]
+st_geometry(X) <- NULL
+clPairs(X, class)
+# head(X)
+```
+
+
+### 2.2.1 PCA
+
+factoextra : Extract and Visualize the Results of Multivariate Data Analyses
+
+```{r}
+library(factoextra)
+library("FactoMineR")
+```
+
+```{r}
+res.pca <- PCA(X,  graph = FALSE)
+get_eig(res.pca)
+```
+```{r}
+fviz_pca_var(res.pca, col.var = "black")
+```
+```{r}
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 5)
+
+# Contributions of variables to PC2
+fviz_contrib(res.pca, choice = "var", axes = 2, top = 5)
+```
+```{r}
+
+fviz_pca_ind(res.pca,
+             label = "none", # hide individual labels
+             # habillage = class, # color by groups
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+             addEllipses = FALSE # Concentration ellipses
+             ) +  theme_set(theme_bw()) + theme(axis.text = element_text( size = 12))
+```
+
+* PC by stats
+
+
+```{r}
+pc <- princomp(X, cor=TRUE, scores=TRUE)
+summary(pc)
+plot(pc, type="lines")
+biplot(pc)
+```
+
+### 2.2.2 VAT
+```{r}
+# NOT RUN {
+library(seriation)
+library(ggplot2)
+
+x <- as.matrix(X)
+dx <- dist(x)
+## create regular VAT
+# VAT(dx, main = "VAT for Lines", col=NULL)
+## ggplot2 version
+if (require("ggplot2")) {
+  ggVAT(dx) + labs(title = "VAT") + guides(color = guide_legend(override.aes = list(size = 12)))
+}
+
+
+## ggplot2 version
+if (require("ggplot2")) {
+  ggiVAT(dx) + guides(color = guide_bins())
+}
+
+# ## compare with dissplot (shows banded structures and relationship between
+# ## center line and the two outer lines)
+# dissplot(dx, method = "OLO_single", main = "Dissplot for Lines", col = bluered(100, bias = .5))
+# 
+# ## compare with optimally reordered heatmap
+# hmap(dx, method = "OLO_single", main = "Heatmap for Lines (opt. leaf ordering)",
+#   col = bluered(100, bias = .5))
+# # }
+```
+
+### 2.2.3 SOM
+
+```{r}
+library(kohonen)
+```
+
+```{r}
+gx = ceiling(sqrt(5*sqrt(nrow(X))))
+## som
+gx = 8
+som_x <- som(x, grid = somgrid(gx,gx, "hexagonal"))
+summary(som_x)
+plot(som_x)
+```
+```{r}
+plot(som_x, type = "mapping", pchs = 19, shape = "round")
+```
+
+
+```{r}
+plot(som_x, type = "changes")
+```
+```{r}
+plot(som_x, type = "counts")
+plot(som_x, type = "dist.neighbours",palette.name=grey.colors, shape = "straight")
+```
+This kind of visualisation is also known as a U-matrix plot. Should give you an idea about how to cluster,
+since Units near a class boundary can be expected to have higher average distances to their neighbours.
+I see 2-3 clusters/districts (keep in mind the grid is toroidal).
+
+```{r}
+plot(som_x, type="quality", shape = "straight") #close to 0 = good quality.
+```
+
+```{r}
+heatmap.som <- function(model){
+  for (i in 1:4) {
+   plot(model, type = "property", property = getCodes(model)[,i], 
+        main = colnames(getCodes(model))[i]) 
+  }
+}
+heatmap.som(som_x)
+```
+
+```{r}
+library(Umatrix)
+
+um = esomTrain(x,5,5)
+
+plotMatrix(um$Umatrix,um$BestMatches)
+
+```
+
+
+## 4. MSD
+
+Types of MDS algorithms
+There are different types of MDS algorithms, including
+
+Classical multidimensional scaling
+Preserves the original distance metric, between points, as well as possible. That is the fitted distances on the MDS map and the original distances are in the same metric. Classic MDS belongs to the so-called metric multidimensional scaling category.
+
+It’s also known as principal coordinates analysis. It’s suitable for quantitative data.
+
+Non-metric multidimensional scaling
+It’s also known as ordinal MDS. Here, it’s not the metric of a distance value that is important or meaningful, but its value in relation to the distances between other pairs of objects.
+
+Ordinal MDS constructs fitted distances that are in the same rank order as the original distance. For example, if the distance of apart objects 1 and 5 rank fifth in the original distance data, then they should also rank fifth in the MDS configuration.
+
+It’s suitable for qualitative data.
+
+
+cmdscale() [stats package]: Compute classical (metric) multidimensional scaling.
+isoMDS() [MASS package]: Compute Kruskal’s non-metric multidimensional scaling (one form of non-metric MDS).
+sammon() [MASS package]: Compute sammon’s non-linear mapping (one form of non-metric MDS).
+
+All these functions take a distance object as the main argument and k is the desired number of dimensions in the scaled output. By default, they return two dimension solutions, but we can change that through the parameter k which defaults to 2.
+
+```{r}
+library(magrittr)
+library(dplyr)
+library(ggpubr)
+mds <- cmdscale(dx)
+mds <- data.frame(mds)
+colnames(mds) <- c("Dim.1", "Dim.2")
+# Plot MDS
+ggscatter(mds, x = "Dim.1", y = "Dim.2", 
+          size = 1,
+          repel = TRUE) + theme_set(theme_bw()) + theme(axis.text = element_text( size = 12))
+```
+```{r}
+clust <- kmeans(x, 3)$cluster %>%
+  as.factor()
+
+mds <- mds %>%
+  mutate(groups = clust)
+# Plot and color by groups
+ggscatter(mds, x = "Dim.1", y = "Dim.2",
+          color = "groups",
+          palette = "jco",
+          size = 1, 
+          ellipse = TRUE,
+          ellipse.type = "convex",
+          repel = TRUE)
+```
+```{r}
+clust <- kmeans(mds, 3)$cluster %>%
+  as.factor()
+
+mds <- mds %>%
+  mutate(groups = clust)
+# Plot and color by groups
+ggscatter(mds, x = "Dim.1", y = "Dim.2",
+          color = "groups",
+          palette = "jco",
+          size = 1, 
+          ellipse = TRUE,
+          ellipse.type = "convex",
+          repel = TRUE) +   theme(axis.text = element_text(color = "dodgerblue", size = 12),
+        axis.text.x = element_text(face = "italic"))
+```
+
+
+
+
+
+# 3. 模拟数据2
+
+## 3.1 模拟数据
+
+
+```{r}
+rowmax = 20
+colmax = 20
+# Sigma <- diag(rep(1,25))
+Sigma2 <- diag(rep(1,5)) 
+Sigma2[1,1] = 9
+Sigma2[5,5] = 4
+mu = c(-3,0,3)
+lens = c(140,120,140)
+```
+
+
+```{r}
+simdata2 = Simulate_mv(rowmax,colmax,Sigma2, mu, lens)
+plot(simdata)
+```
+
+## 3.2 Visiluation
+
+```{r}
+library(mclust)
+```
+
+```{r}
+# class <- simdata2$labels
+X2 = simdata2[,1:5]
+st_geometry(X2) <- NULL
+clPairs(X2, simdata2$labels)
+# head(X)
+```
+```{r}
+clPairs(X2, simdata2$labels,cex.labels = 2,cex.axis = 2)
+```
+
+
+### 3.2.1 PCA
+
+factoextra : Extract and Visualize the Results of Multivariate Data Analyses
+
+```{r}
+library(factoextra)
+library("FactoMineR")
+```
+
+```{r}
+res.pca2 <- PCA(X2,  graph = FALSE)
+get_eig(res.pca2)
+```
+```{r}
+fviz_pca_var(res.pca2, col.var = "black")
+```
+```{r}
+fviz_contrib(res.pca2, choice = "var", axes = 1, top = 5)
+
+# Contributions of variables to PC2
+fviz_contrib(res.pca2, choice = "var", axes = 2, top = 5)
+```
+```{r}
+
+fviz_pca_ind(res.pca2,
+             label = "none", # hide individual labels
+             # habillage = class, # color by groups
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+             addEllipses = FALSE # Concentration ellipses
+             ) +  theme_set(theme_bw()) + theme(axis.text = element_text( size = 12))
+```
+
+
+```{r}
+pc2 <- princomp(X2, cor=TRUE, scores=TRUE)
+summary(pc2)
+plot(pc2, type="lines")
+biplot(pc2)
+```
+
+
+
+### 3.2.2 VAT
+```{r}
+# NOT RUN {
+library(seriation)
+library(ggplot2)
+
+dx2 <- dist(as.matrix(X2))
+
+ggVAT(dx2) + labs(title = "VAT") + guides(color = guide_legend(override.aes = list(size = 12)))
+
+ggiVAT(dx2) + guides(color = guide_bins())
+
+```
+
+### 3.2.3 SOM
+
+```{r}
+library(kohonen)
+```
+
+```{r}
+x2 = as.matrix(X2)
+gx2 = ceiling(sqrt(5*sqrt(nrow(X2))))
+som_x2 <- som(x2, grid = somgrid(gx2,gx2, "hexagonal"))
+summary(som_x2)
+plot(som_x2)
+
+```
+```{r}
+plot(som_x2, type = "mapping", pchs = 19, shape = "round")
+```
+
+
+```{r}
+plot(som_x2, type = "changes")
+```
+```{r}
+plot(som_x2, type = "counts")
+plot(som_x2, type = "dist.neighbours",palette.name=grey.colors, shape = "straight")
+```
+This kind of visualisation is also known as a U-matrix plot. Should give you an idea about how to cluster,
+since Units near a class boundary can be expected to have higher average distances to their neighbours.
+I see 2-3 clusters/districts (keep in mind the grid is toroidal).
+
+```{r}
+plot(som_x2, type="quality", shape = "straight") #close to 0 = good quality.
+```
+
+```{r}
+# heatmap.som <- function(model){
+#   for (i in 1:4) {
+#    plot(model, type = "property", property = getCodes(model)[,i], 
+#         main = colnames(getCodes(model))[i]) 
+#   }
+# }
+heatmap.som(som_x2)
+```
+
+```{r}
+library(Umatrix)
+
+um2 = esomTrain(x2,5,5)
+
+plotMatrix(um2$Umatrix,um2$BestMatches)
+
+```
+
+
+### 3.2.4. MSD
+
+
+```{r}
+library(magrittr)
+library(dplyr)
+library(ggpubr)
+mds2 <- cmdscale(dx2)
+mds2 <- data.frame(mds2)
+colnames(mds2) <- c("Dim.1", "Dim.2")
+# Plot MDS
+ggscatter(mds2, x = "Dim.1", y = "Dim.2", 
+          size = 1,
+          repel = TRUE)
+```
+```{r}
+clust <- kmeans(x2, 3)$cluster %>%
+  as.factor()
+
+mds2 <- mds2%>%
+  mutate(groups = clust)
+# Plot and color by groups
+ggscatter(mds2, x = "Dim.1", y = "Dim.2",
+          color = "groups",
+          palette = "jco",
+          size = 1, 
+          ellipse = TRUE,
+          ellipse.type = "convex",
+          repel = TRUE)
+```
+```{r}
+clust <- kmeans(mds2, 3)$cluster %>%
+  as.factor()
+
+mds2 <- mds2 %>%
+  mutate(groups = clust)
+# Plot and color by groups
+ggscatter(mds2, x = "Dim.1", y = "Dim.2",
+          color = "groups",
+          palette = "jco",
+          size = 1, 
+          ellipse = TRUE,
+          ellipse.type = "convex",
+          repel = TRUE) +   theme(axis.text = element_text(color = "dodgerblue", size = 12),
+        axis.text.x = element_text(face = "italic"))
+```
+## 3.3 Save figure to pdf
+```{r}
+#specify path to save PDF to
+destination = paste0(resultdir, 'mv_simate_vis_cor_0.pdf')
+#open PDF
+pdf(file = destination)
+
+#specify to save plots in 2x2 grid
+par(mfrow = c(2, 2))
+
+#save plots to PDF
+# for (i in 1:4) {
+# simualte data
+clPairs(X2,
+        simdata2$labels,
+        cex.labels = 2,
+        cex.axis = 2)
+# PCA
+fviz_pca_ind(
+  res.pca2,
+  label = "none",
+  # hide individual labels
+  # habillage = class, # color by groups
+  palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+  addEllipses = FALSE # Concentration ellipses
+) +  theme_set(theme_bw()) + theme(axis.text = element_text(size = 12))
+# VAT
+ggiVAT(dx2)
+# SOM
+plot(som_x2,
+     type = "dist.neighbours",
+     palette.name = grey.colors,
+     shape = "straight")
+# }
+
+#turn off PDF plotting
+dev.off() 
+```
+
+```{r}
+library(gridExtra)
+figls = list()
+# figls[[1]] = clPairs(X2,
+#         simdata2$labels,
+#         cex.labels = 2,
+#         cex.axis = 2)
+figls[[1]] = fviz_pca_ind(
+  res.pca2,
+  label = "none",
+  # hide individual labels
+  # habillage = class, # color by groups
+  palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+  addEllipses = FALSE # Concentration ellipses
+) +  theme_set(theme_bw()) + theme(axis.text = element_text(size = 12))
+figls[[2]] = ggiVAT(dx2)
+# ggplot2::ggsave(figls)
+
+# library(gridExtra)
+
+pdf("plots.pdf", onefile = TRUE)
+for (i in seq(length(figls))) {
+  do.call("grid.arrange", figls[[i]])  
+}
+dev.off()
+
+```
+```{r}
+pdf("plots.pdf",width = 4, height=4)
+ggiVAT(dx2)
+dev.off()
+```
+
